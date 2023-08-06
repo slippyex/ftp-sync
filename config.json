@@ -1,0 +1,11 @@
+{
+  "ftpConfig": {
+    "host": "your_ftp_server",
+    "user": "your_ftp_user",
+    "password": "your_ftp_pass",
+    "port": 21
+  },
+  "localDir": "E:\\PATH_TO_YOUR_USB_STICK",
+  "remoteDir": "/REMOTE_PATH",
+  "patchDir": "D:\\PATH_TO_YOUR_LOCAL_PATCH_DIRECTORY"
+}
