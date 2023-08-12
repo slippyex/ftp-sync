@@ -13,7 +13,28 @@ function ftpPath(...segments: string[]): string {
     return path.posix.join(...segments);
 }
 
+let lastFTPOperationTimestamp = Date.now();
+let isFTPOperationRunning = false;
+
+function keepAlive(client: Client) {
+    setInterval(async () => {
+        const elapsedTime = Date.now() - lastFTPOperationTimestamp;
+        if (!isFTPOperationRunning && elapsedTime >= 800 * 1000) { // If it's been 800 seconds since last operation
+            try {
+                await client.send("NOOP");
+                lastFTPOperationTimestamp = Date.now(); // Update the timestamp after sending NOOP
+            } catch (error) {
+                console.error("Error sending NOOP command:", error);
+            }
+        }
+    }, 100 * 1000); // Check every 100 seconds
+}
+
+
 async function traverseAndSync(client: Client, localPath: string, remotePath: string, patchBasePath: string) {
+    isFTPOperationRunning = true;
+    lastFTPOperationTimestamp = Date.now();
+
     const remoteFiles = await client.list(remotePath);
     for (const file of remoteFiles) {
         if (file.name === '.' || file.name === '..') continue;
@@ -32,6 +53,15 @@ async function traverseAndSync(client: Client, localPath: string, remotePath: st
                 const localFileStats = await fs.stat(localFilePath);
                 if (localFileStats.size !== file.size) {
                     console.log(`Size mismatch - Local: ${localFilePath} | Remote: ${remoteFilePath}`);
+                    shouldDownload = true;
+                }
+            } else if (await fs.pathExists(patchFilePath)) { // Check if the patch file exists and matches the size of the remote file
+                const patchFileStats = await fs.stat(patchFilePath);
+                if (patchFileStats.size === file.size) {
+                    console.log(`File exists in patch and matches remote - Skipping: ${patchFilePath}`);
+                    shouldDownload = false;
+                } else {
+                    // If file size doesn't match, we can decide to download or use another strategy.
                     shouldDownload = true;
                 }
             } else {
@@ -78,6 +108,8 @@ async function traverseAndSync(client: Client, localPath: string, remotePath: st
             }
         }
     }
+    lastFTPOperationTimestamp = Date.now();
+    isFTPOperationRunning = false;
 }
 
 async function syncFTPToLocal(ftpConfig: IFTPConfig) {
@@ -87,6 +119,7 @@ async function syncFTPToLocal(ftpConfig: IFTPConfig) {
     try {
         await client.access(ftpConfig);
         await client.useDefaultSettings();
+        keepAlive(client); // Maintain the connection
         //        client.ftp.verbose = true;
         spinner.succeed('Connected to FTP');
 
