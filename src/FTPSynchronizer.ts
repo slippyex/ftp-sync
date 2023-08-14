@@ -123,27 +123,27 @@ export class FtpSynchronizer {
 
     private async traverseAndSync(client: Client, localPath: string, remotePath: string, patchBasePath: string) {
         const remoteFiles = await client.list(remotePath);
-        for (const file of remoteFiles) {
+        for (const remoteFile of remoteFiles) {
             await this.waitForContinueFlag();
 
-            if (file.name === '.' || file.name === '..') continue;
+            if (remoteFile.name === '.' || remoteFile.name === '..') continue;
             this.updateStatusBox('-');
-            const localFilePath = path.join(localPath, file.name);
-            const remoteFilePath = this.ftpPath(remotePath, file.name);
+            const localFilePath = path.join(localPath, remoteFile.name);
+            const remoteFilePath = this.ftpPath(remotePath, remoteFile.name);
             const relativePathFromStart = path.relative(this.localDir, localFilePath);
             const patchFilePath = path.join(patchBasePath, relativePathFromStart);
 
-            if (file.type === FileType.Directory) {
+            if (remoteFile.type === FileType.Directory) {
                 this.currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
                 this.screen.render();
                 await this.traverseAndSync(client, localFilePath, remoteFilePath, patchBasePath);
             } else {
-                if (await this.shouldDownloadFile(localFilePath, file, patchFilePath)) {
+                if (await this.shouldDownloadFile(localFilePath, remoteFile, patchFilePath)) {
                     this.syncCounter++;
                     this.lastFTPOperationTimestamp = dayjs();
                     await fs.ensureDir(path.dirname(patchFilePath));
 
-                    this.syncLogBox.add(chalk.yellow(`- ${file.name}`));
+                    this.syncLogBox.add(chalk.yellow(`- ${remoteFile.name}`));
                     const getElapsedTimeInSeconds = (start: [number, number]): number => {
                         const [seconds, nanoseconds] = process.hrtime(start);
                         return seconds + nanoseconds / 1e9;
@@ -161,7 +161,7 @@ export class FtpSynchronizer {
 
                         lastBytesOverall = info.bytesOverall;
                         this.updateStatusBox(
-                            `Download: ${((info.bytesOverall / file.size) * 100).toFixed(2)}% @ ${speed.toFixed(
+                            `Download: ${((info.bytesOverall / remoteFile.size) * 100).toFixed(2)}% @ ${speed.toFixed(
                                 2
                             )} kB/s`
                         );
@@ -170,13 +170,19 @@ export class FtpSynchronizer {
                     });
 
                     await client.downloadTo(fs.createWriteStream(patchFilePath), remoteFilePath);
+                    // Set the modification time of the local file to match the remote file
+                    if (remoteFile.modifiedAt) {
+                        await fs.utimes(patchFilePath, new Date(), remoteFile.modifiedAt);
+                    }
+
+
                     const syncContent = this.syncLogBox.content.split('\n');
                     syncContent.pop();
                     this.syncLogBox.setContent(syncContent.join('\n'));
-                    this.syncLogBox.add(chalk.bold.green(`\u2713 ${file.name}`));
+                    this.syncLogBox.add(chalk.bold.green(`\u2713 ${remoteFile.name}`));
                     client.trackProgress();
                 } else {
-                    this.logBox.add(`${chalk.red(file.name)} in sync`);
+                    this.logBox.add(`${chalk.red(remoteFile.name)} in sync`);
                 }
             }
             this.screen.render();
