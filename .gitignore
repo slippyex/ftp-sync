@@ -3,4 +3,4 @@
 .build
 node_modules
 .env
-config.marcer.json
+config/config.marcer.json
