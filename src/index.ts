@@ -1,110 +1,174 @@
 import * as fs from 'fs-extra';
-import { Client, FileType } from 'basic-ftp';
+import { Client, FileInfo, FileType } from 'basic-ftp';
 import * as path from 'path';
-import ora from 'ora';
-import { IFTPConfig } from './@types/interfaces';
-import config from '../config.marcer.json';
+import dayjs from 'dayjs';
+import { IFTPConfig, ISyncConfig } from './@types/interfaces';
+import chalk from 'chalk';
+import { setupUI } from './ui';
 
-const localDir = config.localDir;
-const remoteDir = config.remoteDir;
-const patchDir = config.patchDir;
+const config = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'configs', process.argv[2])).toString()
+) as ISyncConfig;
+const { localDir, remoteDir, patchDir } = config;
+
+const {
+    screen,
+    logBox,
+    syncLogBox,
+    statusBox,
+    currentDirectoryBox } = setupUI(config);
+
+let isSyncRunning = false;
+let fileCounter = 0;
+let syncCounter = 0;
+
+let lastFTPOperationTimestamp = dayjs();
+
+screen.key(['q', 'C-c'], function () {
+    return process.exit(0);
+});
+
+// Start the FTP sync when the 's' key is pressed
+screen.key(['s'], async function () {
+    try {
+        await syncFTPToLocal(config.ftpConfig);
+    } catch (error) {
+        logBox.log(`Error: ${error.message}`);
+        screen.render();
+    }
+});
+
+screen.key(['x'], async function () {
+    if (isSyncRunning) {
+        logBox.add(`processing stopped...`);
+        isSyncRunning = false;
+    }
+});
+
+screen.key(['c'], async function () {
+    if (!isSyncRunning) {
+        logBox.add(`processing continues...`);
+        isSyncRunning = true;
+    }
+});
 
 function ftpPath(...segments: string[]): string {
     return path.posix.join(...segments);
 }
 
+async function shouldDownloadFile(
+    localFilePath: string,
+    remoteFile: FileInfo,
+    patchFilePath: string
+): Promise<boolean> {
+    fileCounter++;
+    if (await fs.pathExists(localFilePath)) {
+        const localFileStats = await fs.stat(localFilePath);
+        return localFileStats.size !== remoteFile.size;
+    }
+
+    if (await fs.pathExists(patchFilePath)) {
+        const patchFileStats = await fs.stat(patchFilePath);
+        return (
+            patchFileStats.size !== remoteFile.size || dayjs().subtract(1, 'minute').isAfter(lastFTPOperationTimestamp)
+        );
+    }
+
+    return true;
+}
+
+async function waitForContinueFlag() {
+    return new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+            if (isSyncRunning) {
+                clearInterval(checkInterval);
+                resolve(null);
+            }
+        }, 100); // checking every 100ms
+    });
+}
+
 async function traverseAndSync(client: Client, localPath: string, remotePath: string, patchBasePath: string) {
     const remoteFiles = await client.list(remotePath);
     for (const file of remoteFiles) {
-        if (file.name === '.' || file.name === '..') continue;
+        await waitForContinueFlag();
 
+        if (file.name === '.' || file.name === '..') continue;
+        statusBox.setItems([`files processed: ${fileCounter}`, `files synchronized: ${syncCounter}`, `Download: -`]);
         const localFilePath = path.join(localPath, file.name);
         const remoteFilePath = ftpPath(remotePath, file.name);
         const relativePathFromStart = path.relative(localDir, localFilePath);
         const patchFilePath = path.join(patchBasePath, relativePathFromStart);
 
         if (file.type === FileType.Directory) {
+            currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
+            screen.render();
             await traverseAndSync(client, localFilePath, remoteFilePath, patchBasePath);
         } else {
-            let shouldDownload = false;
-
-            if (await fs.pathExists(localFilePath)) {
-                const localFileStats = await fs.stat(localFilePath);
-                if (localFileStats.size !== file.size) {
-                    console.log(`Size mismatch - Local: ${localFilePath} | Remote: ${remoteFilePath}`);
-                    shouldDownload = true;
-                }
-            } else {
-                console.log(`Missing locally - Remote: ${remoteFilePath}`);
-                shouldDownload = true;
-            }
-
-            if (shouldDownload) {
+            if (await shouldDownloadFile(localFilePath, file, patchFilePath)) {
+                syncCounter++;
+                lastFTPOperationTimestamp = dayjs();
                 await fs.ensureDir(path.dirname(patchFilePath));
 
-                const spinner = ora({
-                    text: `Downloading ${file.name}...`,
-                    spinner: 'dots'
-                }).start();
-
-                let startTime = process.hrtime();
-
-                // Helper function to compute elapsed time in seconds using process.hrtime
+                syncLogBox.add(chalk.yellow(`- ${file.name}`));
                 const getElapsedTimeInSeconds = (start: [number, number]): number => {
                     const [seconds, nanoseconds] = process.hrtime(start);
-                    return seconds + nanoseconds / 1e9; // Convert nanoseconds to seconds and add
+                    return seconds + nanoseconds / 1e9;
                 };
 
                 let lastBytesOverall = 0;
+                const startTime = process.hrtime(); // Start the timer here
 
-                // Attach progress listener
                 client.trackProgress(info => {
                     const elapsedSeconds = getElapsedTimeInSeconds(startTime);
-                    const speed = (info.bytesOverall - lastBytesOverall) / elapsedSeconds / 1024; // Speed in kB/s
+                    const bytesSinceLast = info.bytesOverall - lastBytesOverall;
 
-                    spinner.text = `Downloading ${file.name}... ${((info.bytesOverall / file.size) * 100).toFixed(
-                        2
-                    )}% @ ${speed.toFixed(2)} kB/s`;
+                    // Speed since the last check
+                    const speed = bytesSinceLast / elapsedSeconds / 1024;
 
                     lastBytesOverall = info.bytesOverall;
-                    startTime = process.hrtime(); // Reset start time for next iteration
+
+                    statusBox.setItems([
+                        `files processed: ${fileCounter}`,
+                        `files synchronized: ${syncCounter}`,
+                        `Download: ${((info.bytesOverall / file.size) * 100).toFixed(2)}% @ ${speed.toFixed(2)} kB/s`
+                    ]);
+
+                    screen.render();
                 });
 
                 await client.downloadTo(fs.createWriteStream(patchFilePath), remoteFilePath);
-
-                client.trackProgress(); // Removes progress tracker
-
-                spinner.succeed(`Downloaded ${file.name}`);
+                const syncContent = syncLogBox.content.split('\n');
+                syncContent.pop();
+                syncLogBox.setContent(syncContent.join('\n'));
+                syncLogBox.add(chalk.bold.green(`\u2713 ${file.name}`));
+                client.trackProgress();
+            } else {
+                logBox.add(`${chalk.red(file.name)} already synced`);
             }
         }
+        screen.render();
     }
 }
 
 async function syncFTPToLocal(ftpConfig: IFTPConfig) {
-    const spinner = ora('Connecting to FTP...').start();
+    logBox.log('Connecting to FTP server...');
     const client = new Client();
     client.ftp.encoding = 'latin1';
     try {
         await client.access(ftpConfig);
         await client.useDefaultSettings();
-        //        client.ftp.verbose = true;
-        spinner.succeed('Connected to FTP');
-
+        logBox.log(`Connection to FTP established`);
+        isSyncRunning = true;
         await traverseAndSync(client, localDir, remoteDir, patchDir);
     } catch (error) {
-        spinner.fail(`Error syncing FTP: ${error.message}`);
-        throw new Error(error);
+        logBox.log(`Error syncing FTP: ${error.message}`);
+        throw error;
     } finally {
-        ora('Closing FTP connection...').start().succeed();
         client.close();
     }
 }
 
-(async () => {
-    try {
-        await syncFTPToLocal(config.ftpConfig);
-    } catch (error) {
-        console.error(`Error: ${error.message}`);
-        throw new Error(error);
-    }
+(() => {
+    screen.render();
 })();
