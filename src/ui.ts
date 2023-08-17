@@ -16,7 +16,7 @@ export function setupUI(config: ISyncConfig) {
         label: 'FTP Details'
     });
     ftpDetails.setContent(
-        `Host: ${config.ftpConfig.host}\nUser: ${config.ftpConfig.user}\nPass: ********\nPort: ${
+        `Host: ${config.ftpConfig.host}\nUser: ${config.ftpConfig.user || 'anonymous'}\nPass: ********\nPort: ${
             config.ftpConfig.port || '21'
         }`
     );
