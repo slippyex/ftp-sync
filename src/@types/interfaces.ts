@@ -3,6 +3,7 @@ export interface IFTPConfig {
     user: string;
     password: string;
     port: number;
+    defaultEncoding: string;
 }
 
 export interface ISyncConfig extends IFTPConfig {
@@ -11,4 +12,15 @@ export interface ISyncConfig extends IFTPConfig {
     localDir: string;
     remoteDir: string;
     patchDir: string;
+}
+export interface IStatusEntries {
+    processingRate: string;
+    elapsedTime: string;
+    fileCounter: number;
+    syncCounter: number;
+    downloadMsg: string;
+}
+
+export interface ILoggable {
+    log: (...args: unknown[]) => void;
 }
