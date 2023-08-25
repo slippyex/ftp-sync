@@ -1,30 +1,30 @@
 import * as fs from 'fs-extra';
-import { Client, FileInfo, FileType } from 'basic-ftp';
+import { FileInfo, FileType } from 'basic-ftp';
 import * as path from 'path';
 import dayjs from 'dayjs';
-import { IFTPConfig, ISyncConfig } from './@types/interfaces';
+import { IStatusEntries, ISyncConfig } from './@types/interfaces';
 import chalk from 'chalk';
-import { setupUI } from './ui';
-import { Widgets } from 'blessed';
+import { FTPUserInterface } from './FTPUserInterface';
+import { ConnectionManager } from './ConnectionManager';
 
 export class FtpSynchronizer {
     private readonly config: ISyncConfig;
     private readonly localDir: string;
     private readonly remoteDir: string;
     private readonly patchDir: string;
-    private screen: Widgets.Screen;
-    private logBox: Widgets.Log;
-    private syncLogBox: Widgets.Log;
-    private statusBox: Widgets.ListElement;
-    private currentDirectoryBox: Widgets.BoxElement;
+    private readonly ui: FTPUserInterface;
+    private readonly conn: ConnectionManager;
     private isSyncRunning = false;
-    private fileCounter = 0;
-    private syncCounter = 0;
+    private statusEntries: IStatusEntries = {
+        fileCounter: 0,
+        syncCounter: 0,
+        downloadMsg: '-',
+        elapsedTime: '00:00:00',
+        processingRate: ''
+    };
     private lastFTPOperationTimestamp = dayjs();
     private syncStartTime: Date | null = null;
     private timerInterval: NodeJS.Timeout | null = null;
-    private elapsedTime = '00:00:00';
-    private downloadMsg = '-';
     private isSafetyDownload = false;
 
     constructor(configFileName: string) {
@@ -32,50 +32,56 @@ export class FtpSynchronizer {
         this.localDir = this.config.localDir;
         this.remoteDir = this.config.remoteDir;
         this.patchDir = this.config.patchDir;
-
-        const ui = setupUI(this.config);
-        this.screen = ui.screen;
-        this.logBox = ui.logBox;
-        this.syncLogBox = ui.syncLogBox;
-        this.statusBox = ui.statusBox;
-        this.currentDirectoryBox = ui.currentDirectoryBox;
+        this.ui = new FTPUserInterface(this.config);
+        this.conn = new ConnectionManager(this.config.ftpConfig, this.ui.logBox);
 
         this.initializeScreen();
     }
 
     private initializeScreen() {
-        this.screen.key(['q', 'C-c'], () => process.exit(0));
-        this.screen.key(['s', 'x'], this.handleKeyPress.bind(this));
-        this.updateStatusBox();
-        this.screen.render();
+        this.ui.screen.key(['q', 'C-c'], () => process.exit(0));
+        this.ui.screen.key(['s', 'x'], this.handleKeyPress.bind(this));
+        this.ui.screen.key(['r'], this.handleKeyPress.bind(this));
+        this.ui.screen.render();
     }
 
     private startTimer() {
         this.timerInterval = setInterval(() => {
-            this.elapsedTime = this.getElapsedTime();
-            this.updateStatusBox();
+            this.statusEntries.elapsedTime = this.getElapsedTime();
+            this.statusEntries.processingRate = this.getProcessingRate();
+            this.ui.updateStatusBox(this.statusEntries);
         }, 1000); // Update every second
     }
-    private handleKeyPress(_: never, key: { name: string }) {
+
+    private async handleKeyPress(_: never, key: { name: string }) {
         switch (key.name) {
             case 's':
                 if (!this.isSyncRunning) {
                     this.syncStartTime = new Date();
                     this.startTimer();
 
-                    this.syncFTPToLocal(this.config.ftpConfig).catch(error => {
-                        this.logBox.log(`Error: ${error.message}`);
-                        this.screen.render();
+                    this.syncFTPToLocal().catch(error => {
+                        this.ui.logBox.log(`Error: ${error.message}`);
+                        this.ui.screen.render();
                     });
                 }
                 break;
+            case 'r':
+                this.ui.logBox.add(`reconnecting to remote server`);
+                this.isSyncRunning = false;
+                clearInterval(this.timerInterval);
+                this.conn.close();
+                await this.conn.safeReconnect(5);
+                this.startTimer();
+                this.isSyncRunning = true;
+                break;
             case 'x':
                 if (this.isSyncRunning) {
-                    this.logBox.add(`processing stopped...`);
+                    this.ui.logBox.add(`processing stopped...`);
                     clearInterval(this.timerInterval);
                     this.isSyncRunning = false;
                 } else {
-                    this.logBox.add(`processing continues...`);
+                    this.ui.logBox.add(`processing continues...`);
                     this.startTimer();
                     this.isSyncRunning = true;
                 }
@@ -101,18 +107,8 @@ export class FtpSynchronizer {
         if (!this.syncStartTime) return '0 files/s';
         const now = new Date();
         const diffSeconds = (now.getTime() - this.syncStartTime.getTime()) / 1000;
-        const rate = this.fileCounter / diffSeconds;
+        const rate = this.statusEntries.fileCounter / diffSeconds;
         return `${rate.toFixed(2)} files/s`;
-    }
-
-    private updateStatusBox() {
-        const rate = this.getProcessingRate();
-        this.statusBox.setItems([
-            `elapsed time: ${this.elapsedTime}`,
-            `files processed: ${this.fileCounter} @ ${rate}`,
-            `files synchronized: ${this.syncCounter}`,
-            `Download: ${this.downloadMsg}`
-        ]);
     }
 
     private getElapsedTime(): string {
@@ -131,14 +127,18 @@ export class FtpSynchronizer {
         )}`;
     }
 
+    private hasElapsedOneMinuteSinceLastOperation(): boolean {
+        return dayjs().subtract(1, 'minute').isAfter(this.lastFTPOperationTimestamp);
+    }
+
     private async shouldDownloadFile(
         localFilePath: string,
         remoteFile: FileInfo,
         patchFilePath: string
     ): Promise<boolean> {
-        this.fileCounter++;
-        if (dayjs().subtract(1, 'minute').isAfter(this.lastFTPOperationTimestamp)) {
-            this.logBox.log(`--- safety sync ---`);
+        this.statusEntries.fileCounter++;
+        if (this.hasElapsedOneMinuteSinceLastOperation()) {
+            this.ui.logBox.log(`--- safety sync ---`);
             this.isSafetyDownload = true;
         }
         if (await fs.pathExists(localFilePath)) {
@@ -170,60 +170,32 @@ export class FtpSynchronizer {
             }, 100); // checking every 100ms
         });
     }
-    private async safeReconnect(client: Client, maxRetries = 3) {
-        let retries = 0;
-        while (retries < maxRetries) {
-            try {
-                await client.access(this.config.ftpConfig);
-                return; // if successful, just exit
-            } catch (error) {
-                retries++;
-                if (retries >= maxRetries) {
-                    throw new Error('Failed to connect after multiple attempts');
-                }
-                await this.sleep(2000); // wait for 2 seconds before retrying
-            }
-        }
-    }
 
-    private sleep(ms: number) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-    private async safeList(client: Client, remotePath: string): Promise<FileInfo[]> {
-        try {
-            return client.list(remotePath);
-        } catch (err) {
-            this.logBox.log(`connection lost - trying to reconnect`);
-            await this.safeReconnect(client);
-            return client.list(remotePath);
-        }
-    }
-
-    private async traverseAndSync(client: Client, localPath: string, remotePath: string, patchBasePath: string) {
-        const remoteFiles = await this.safeList(client, remotePath);
+    private async traverseAndSync(localPath: string, remotePath: string, patchBasePath: string) {
+        const remoteFiles = await this.conn.safeList(remotePath);
         for (const remoteFile of remoteFiles) {
             await this.waitForContinueFlag();
 
             if (remoteFile.name === '.' || remoteFile.name === '..') continue;
-            this.downloadMsg = '-';
+            this.statusEntries.downloadMsg = '-';
             const localFilePath = path.join(localPath, remoteFile.name);
             const remoteFilePath = this.ftpPath(remotePath, remoteFile.name);
             const relativePathFromStart = path.relative(this.localDir, localFilePath);
             const patchFilePath = path.join(patchBasePath, relativePathFromStart);
 
             if (remoteFile.type === FileType.Directory) {
-                this.currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
-                this.screen.render();
-                await this.traverseAndSync(client, localFilePath, remoteFilePath, patchBasePath);
+                this.ui.currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
+                this.ui.screen.render();
+                await this.traverseAndSync(localFilePath, remoteFilePath, patchBasePath);
             } else {
                 if (await this.shouldDownloadFile(localFilePath, remoteFile, patchFilePath)) {
                     if (!this.isSafetyDownload) {
-                        this.syncCounter++;
+                        this.statusEntries.syncCounter++;
                     }
                     this.lastFTPOperationTimestamp = dayjs();
                     await fs.ensureDir(path.dirname(patchFilePath));
 
-                    this.syncLogBox.add(chalk.yellow(`- ${remoteFile.name}`));
+                    this.ui.syncLogBox.add(chalk.yellow(`- ${remoteFile.name}`));
                     const getElapsedTimeInSeconds = (start: [number, number]): number => {
                         const [seconds, nanoseconds] = process.hrtime(start);
                         return seconds + nanoseconds / 1e9;
@@ -232,7 +204,7 @@ export class FtpSynchronizer {
                     let lastBytesOverall = 0;
                     const startTime = process.hrtime(); // Start the timer here
 
-                    client.trackProgress(info => {
+                    this.conn.trackProgress(info => {
                         const elapsedSeconds = getElapsedTimeInSeconds(startTime);
                         const bytesSinceLast = info.bytesOverall - lastBytesOverall;
 
@@ -240,53 +212,49 @@ export class FtpSynchronizer {
                         const speed = bytesSinceLast / elapsedSeconds / 1024;
 
                         lastBytesOverall = info.bytesOverall;
-                        this.downloadMsg = `Download: ${((info.bytesOverall / remoteFile.size) * 100).toFixed(
-                            2
-                        )}% @ ${speed.toFixed(2)} kB/s`;
-                        this.updateStatusBox();
+                        this.statusEntries.downloadMsg = `Download: ${(
+                            (info.bytesOverall / remoteFile.size) *
+                            100
+                        ).toFixed(2)}% @ ${speed.toFixed(2)} kB/s`;
+                        this.ui.updateStatusBox(this.statusEntries);
 
-                        this.screen.render();
+                        this.ui.screen.render();
                     });
+                    await this.conn.safeDownload(fs.createWriteStream(patchFilePath), remoteFilePath);
 
-                    await client.downloadTo(fs.createWriteStream(patchFilePath), remoteFilePath);
                     // Set the modification time of the local file to match the remote file
                     if (remoteFile.modifiedAt) {
                         await fs.utimes(patchFilePath, new Date(), remoteFile.modifiedAt);
                     }
 
-                    const syncContent = this.syncLogBox.content.split('\n');
+                    const syncContent = this.ui.syncLogBox.content.split('\n');
                     syncContent.pop();
-                    this.syncLogBox.setContent(syncContent.join('\n'));
+                    this.ui.syncLogBox.setContent(syncContent.join('\n'));
                     if (this.isSafetyDownload) {
-                        this.syncLogBox.add(chalk.bold.strikethrough.grey.dim(`\u2713 ${remoteFile.name} (safety)`));
+                        this.ui.syncLogBox.add(chalk.bold.strikethrough.grey.dim(`\u2713 ${remoteFile.name} (safety)`));
                         this.isSafetyDownload = false;
                     } else {
-                        this.syncLogBox.add(chalk.bold.green(`\u2713 ${remoteFile.name}`));
+                        this.ui.syncLogBox.add(chalk.bold.green(`\u2713 ${remoteFile.name}`));
                     }
-                    client.trackProgress();
+                    this.conn.trackProgress();
                 } else {
-                    this.logBox.add(`${chalk.red(remoteFile.name)} in sync`);
+                    this.ui.logBox.add(`${chalk.red(remoteFile.name)} in sync`);
                 }
             }
-            this.screen.render();
+            this.ui.screen.render();
         }
     }
 
-    private async syncFTPToLocal(ftpConfig: IFTPConfig) {
-        this.logBox.log('Connecting to FTP server...');
-        const client = new Client();
-        client.ftp.encoding = 'latin1';
+    private async syncFTPToLocal() {
         try {
-            await client.access(ftpConfig);
-            await client.useDefaultSettings();
-            this.logBox.log(`Connection to FTP established`);
+            await this.conn.connect();
             this.isSyncRunning = true;
-            await this.traverseAndSync(client, this.localDir, this.remoteDir, this.patchDir);
+            await this.traverseAndSync(this.localDir, this.remoteDir, this.patchDir);
         } catch (error) {
-            this.logBox.log(`Error syncing FTP: ${error.message}`);
+            this.ui.logBox.log(`Error syncing FTP: ${error.message}`);
             throw error;
         } finally {
-            client.close();
+            this.conn.close();
         }
     }
 }

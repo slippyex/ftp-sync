@@ -1,5 +1,5 @@
 import blessed from 'blessed';
-import { ISyncConfig } from './@types/interfaces';
+import { ISyncConfig } from '../@types/interfaces';
 
 export function setupUI(config: ISyncConfig) {
     const screen = blessed.screen({
@@ -62,6 +62,11 @@ export function setupUI(config: ISyncConfig) {
         height: '60%',
         border: { type: 'line' },
         fg: 'green',
+        keys: true,
+        vi: true,
+        alwaysScroll: true,
+        mouse: true,
+        scrollable: true,
         label: 'Processing Log'
     });
 
