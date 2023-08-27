@@ -39,7 +39,7 @@ export class FtpSynchronizer {
     }
 
     private initializeScreen() {
-        this.ui.screen.key(['q', 'C-c'], () => process.exit(0));
+        this.ui.screen.key(['q', 'C-c'], () => this.ui.createQuitConfirm());
         this.ui.screen.key(['s', 'x'], this.handleKeyPress.bind(this));
         this.ui.screen.key(['r'], this.handleKeyPress.bind(this));
         this.ui.screen.render();
@@ -69,10 +69,7 @@ export class FtpSynchronizer {
             case 'r':
                 this.ui.logBox.add(`reconnecting to remote server`);
                 this.isSyncRunning = false;
-                clearInterval(this.timerInterval);
-                this.conn.close();
-                await this.conn.safeReconnect(5);
-                this.startTimer();
+                await this.conn.safeReconnect();
                 this.isSyncRunning = true;
                 break;
             case 'x':
