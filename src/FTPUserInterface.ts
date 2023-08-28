@@ -1,6 +1,6 @@
 import { Widgets } from 'blessed';
 import { IStatusEntries, ISyncConfig } from './@types/interfaces';
-import { setupUI } from './lib/ui';
+import {createAlertBox, setupUI} from './lib/ui';
 
 export class FTPUserInterface {
     screen: Widgets.Screen;
@@ -18,10 +18,6 @@ export class FTPUserInterface {
         this.currentDirectoryBox = ui.currentDirectoryBox;
     }
 
-    initializeScreen() {
-        this.screen.key(['q', 'C-c'], () => process.exit(0));
-        this.screen.render();
-    }
     public updateStatusBox(options: IStatusEntries) {
         this.statusBox.setItems([
             `elapsed time: ${options.elapsedTime}`,
@@ -29,5 +25,23 @@ export class FTPUserInterface {
             `files synchronized: ${options.syncCounter}`,
             `Download: ${options.downloadMsg}`
         ]);
+    }
+
+    public createQuitConfirm() {
+        const quitConfirm = createAlertBox(this.screen);
+
+        // Keybindings for the confirmation
+        this.screen.key(['y'], () => {
+            // Handle quitting the app
+            process.exit(0);
+        });
+
+        this.screen.key(['n'], () => {
+            quitConfirm.detach();
+            this.screen.render();
+        });
+
+        this.screen.append(quitConfirm);
+        this.screen.render();
     }
 }

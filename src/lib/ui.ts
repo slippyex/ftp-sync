@@ -1,5 +1,19 @@
-import blessed from 'blessed';
+import blessed, {Widgets} from 'blessed';
 import { ISyncConfig } from '../@types/interfaces';
+
+export function createAlertBox(screen: Widgets.Screen) {
+    return blessed.box({
+        parent: screen,
+        top: 'center',
+        left: 'center',
+        width: '50%',
+        height: 'shrink',
+        border: { type: 'line' },
+        label: 'Confirm',
+        content: 'Are you sure to quit?\n\n[y] Yes  [n] No',
+        align: 'center'
+    });
+}
 
 export function setupUI(config: ISyncConfig) {
     const screen = blessed.screen({

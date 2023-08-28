@@ -7,17 +7,23 @@ import { ensureConnection } from './@decorators/ensureConnection';
 export class ConnectionManager {
     private readonly client = new Client();
     private readonly logger?: ILoggable;
+    private readonly config: IFTPConfig;
+    private isClosed: boolean = true;
 
-    constructor(private config: IFTPConfig, logger: ILoggable) {
-        this.client.ftp.encoding = (config.defaultEncoding as StringEncoding) || 'latin1';
+    constructor(config: IFTPConfig, logger: ILoggable) {
+        this.config = config;
         this.logger = logger;
     }
 
     async connect() {
-        this.logger?.log('Connecting to FTP server...');
-        await this.client.access(this.config);
-        await this.client.useDefaultSettings();
-        this.logger?.log(`Connection to FTP established`);
+        if (this.isClosed) {
+            this.logger?.log('Connecting to FTP server...');
+            this.client.ftp.encoding = (this.config.defaultEncoding as StringEncoding) || 'latin1';
+            await this.client.access(this.config);
+            await this.client.useDefaultSettings();
+            this.isClosed = false;
+            this.logger?.log(`Connection to FTP established`);
+        }
     }
 
     getClient() {
@@ -39,20 +45,25 @@ export class ConnectionManager {
     }
 
     async safeReconnect(maxRetries = 3) {
+        let delay = 2000;
         for (let retries = 0; retries < maxRetries; retries++) {
             try {
-                await this.client.connect();
+                if (!this.client.closed)
+                    this.close();
+                await this.connect();
                 return;
             } catch (error) {
                 if (retries === maxRetries - 1) {
                     throw new Error('Failed to connect after multiple attempts');
                 }
-                await this.sleep(2000);
+                await this.sleep(delay);
+                delay *= 2;
             }
         }
     }
 
     close() {
+        this.isClosed = true;
         this.client.close();
     }
 
