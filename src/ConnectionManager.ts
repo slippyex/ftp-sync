@@ -1,5 +1,5 @@
 import { Client, FileInfo, StringEncoding } from 'basic-ftp';
-import { IFTPConfig, ILoggable } from './@types/interfaces';
+import { IFTPConfig, ILoggable } from 'interfaces';
 import { ProgressHandler } from 'basic-ftp/dist/ProgressTracker';
 import * as fs from 'fs';
 import { ensureConnection } from './@decorators/ensureConnection';
@@ -18,7 +18,7 @@ export class ConnectionManager {
     async connect() {
         if (this.isClosed) {
             this.logger?.log('Connecting to FTP server...');
-            this.client.ftp.encoding = (this.config.defaultEncoding as StringEncoding) || 'latin1';
+            this.client.ftp.encoding = (this.config?.defaultEncoding as StringEncoding) || 'latin1';
             await this.client.access(this.config);
             await this.client.useDefaultSettings();
             this.isClosed = false;
@@ -44,12 +44,10 @@ export class ConnectionManager {
         await this.client.downloadTo(localStream, remoteFilePath);
     }
 
-    async safeReconnect(maxRetries = 3) {
-        let delay = 2000;
+    async safeReconnect(maxRetries = 3, delay = 2000) {
         for (let retries = 0; retries < maxRetries; retries++) {
             try {
-                if (!this.client.closed)
-                    this.close();
+                if (!this.client.closed) this.close();
                 await this.connect();
                 return;
             } catch (error) {

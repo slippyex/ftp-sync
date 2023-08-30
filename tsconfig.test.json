@@ -1,23 +1,23 @@
 {
   "compilerOptions": {
+    "allowJs": false,
+    "declaration": true,
     "module": "commonjs",
     "esModuleInterop": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "target": "es5",
-    "allowJs": false,
     "noImplicitAny": true,
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "sourceMap": true,
-    "outDir": ".build",
-    "rootDir": "./",
+    "outDir": "tests.js/",
     "baseUrl": ".",
-    "downlevelIteration": true,
     "paths": {
       "*": ["node_modules/*", "src/@types/*", "src/@decorators/*"]
     },
-    "lib": ["es2015", "es2017", "dom"]
+    "lib": ["es2015", "es2017", "dom"],
+    "downlevelIteration": true
   },
-  "include": ["src/**/*", "src/index.ts"]
+  "include": ["tests"]
 }

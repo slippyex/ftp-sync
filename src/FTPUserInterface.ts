@@ -1,6 +1,6 @@
 import { Widgets } from 'blessed';
 import { IStatusEntries, ISyncConfig } from './@types/interfaces';
-import {createAlertBox, setupUI} from './lib/ui';
+import { createAlertBox, setupUI } from './lib/ui';
 
 export class FTPUserInterface {
     screen: Widgets.Screen;

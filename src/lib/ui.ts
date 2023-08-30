@@ -1,4 +1,4 @@
-import blessed, {Widgets} from 'blessed';
+import blessed, { Widgets } from 'blessed';
 import { ISyncConfig } from '../@types/interfaces';
 
 export function createAlertBox(screen: Widgets.Screen) {
