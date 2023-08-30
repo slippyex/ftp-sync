@@ -4,7 +4,6 @@ import * as fs from 'fs-extra';
 import { FtpSynchronizer } from '../src/FTPSynchronizer';
 import { FileType } from 'basic-ftp';
 
-// Mocking the dependencies
 jest.mock('fs-extra', () => ({
     existsSync: jest.fn(),
     pathExists: jest.fn(),

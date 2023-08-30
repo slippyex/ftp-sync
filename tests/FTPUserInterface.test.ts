@@ -3,7 +3,6 @@ import { FTPUserInterface } from '../src/FTPUserInterface';
 import { createAlertBox, setupUI } from '../src/lib/ui';
 import { ISyncConfig } from 'interfaces';
 
-// Mocking the dependencies
 jest.mock('blessed');
 jest.mock('../src/lib/ui');
 
@@ -12,11 +11,8 @@ describe('FTPUserInterface', () => {
     const mockConfig = {} as ISyncConfig;
 
     beforeEach(() => {
-        // Reset the mocked functions before each test
         (setupUI as jest.Mock).mockClear();
         (createAlertBox as jest.Mock).mockClear();
-
-        // Mock the return value of setupUI
         (setupUI as jest.Mock).mockReturnValue({
             screen: {} as Widgets.Screen,
             logBox: {} as Widgets.Log,
@@ -56,6 +52,4 @@ describe('FTPUserInterface', () => {
             `Download: ${mockOptions.downloadMsg}`
         ]);
     });
-
-    // Additional tests for other methods can be added here
 });
