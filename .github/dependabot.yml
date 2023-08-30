@@ -4,7 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-      
+    ignore:
+      - dependency-name: "chalk"
+        versions: ["5.x"]
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
