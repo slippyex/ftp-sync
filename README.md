@@ -4,7 +4,7 @@ Elegantly crafted in TypeScript, **FTP-Sync** is not just another FTP tool – i
 
 Initially started to solve a personal problem but it's always good to provide code to the public!
 
-## Example of the sync in action
+## 🎥 Sync tool in action
 ![Example video](https://raw.githubusercontent.com/slippyex/ftp-sync/master/docs/20230831075802.gif)
 
 
