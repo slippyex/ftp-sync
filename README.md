@@ -4,6 +4,10 @@ Elegantly crafted in TypeScript, **FTP-Sync** is not just another FTP tool – i
 
 Initially started to solve a personal problem but it's always good to provide code to the public!
 
+## Example of the sync in action
+![Example video](https://raw.githubusercontent.com/slippyex/ftp-sync/master/docs/20230831075802.gif)
+
+
 ## 🌟 Features
 
 - 📊 **Dynamic UI**: Real-time, visually appealing UI that keeps you informed about the synchronization status.
