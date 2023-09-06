@@ -8,6 +8,9 @@ import { FTPUserInterface } from './FTPUserInterface';
 import { ConnectionManager } from './ConnectionManager';
 
 export class FtpSynchronizer {
+    private static readonly HOUR_IN_MS = 60 * 60 * 1000;
+    private static readonly MINUTE_IN_MS = 60 * 1000;
+
     private readonly config: ISyncConfig;
     private readonly localDir: string;
     private readonly remoteDir: string;
@@ -111,17 +114,19 @@ export class FtpSynchronizer {
     private getElapsedTime(): string {
         if (!this.syncStartTime) return '00:00:00';
 
-        const now = new Date();
-        const diff = now.getTime() - this.syncStartTime.getTime(); // difference in milliseconds
+        const diff = new Date().getTime() - this.syncStartTime.getTime(); // difference in milliseconds
 
-        const hours = Math.floor(diff / (60 * 60 * 1000));
-        const minutes = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
-        const seconds = Math.floor((diff % (60 * 1000)) / 1000);
+        const hours = Math.floor(diff / FtpSynchronizer.HOUR_IN_MS);
+        const minutes = Math.floor((diff % FtpSynchronizer.HOUR_IN_MS) / FtpSynchronizer.MINUTE_IN_MS);
+        const seconds = Math.floor((diff % FtpSynchronizer.MINUTE_IN_MS) / 1000);
 
-        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(
-            2,
-            '0'
+        return `${this.formatTimeComponent(hours)}:${this.formatTimeComponent(minutes)}:${this.formatTimeComponent(
+            seconds
         )}`;
+    }
+
+    private formatTimeComponent(value: number): string {
+        return String(value).padStart(2, '0');
     }
 
     private hasElapsedOneMinuteSinceLastOperation(): boolean {
@@ -134,27 +139,34 @@ export class FtpSynchronizer {
         patchFilePath: string
     ): Promise<boolean> {
         this.statusEntries.fileCounter++;
-        if (this.hasElapsedOneMinuteSinceLastOperation()) {
+
+        const elapsedOneMinute = this.hasElapsedOneMinuteSinceLastOperation();
+        if (elapsedOneMinute) {
             this.ui.logBox.log(`--- safety sync ---`);
             this.isSafetyDownload = true;
         }
-        if (await fs.pathExists(localFilePath)) {
-            const localFileStats = await fs.stat(localFilePath);
-            return (
-                localFileStats.size !== remoteFile.size ||
-                dayjs().subtract(1, 'minute').isAfter(this.lastFTPOperationTimestamp)
-            );
+
+        if (await this.shouldDownloadBasedOnPath(localFilePath, remoteFile.size, elapsedOneMinute)) {
+            return true;
         }
 
-        if (await fs.pathExists(patchFilePath)) {
-            const patchFileStats = await fs.stat(patchFilePath);
-            return (
-                patchFileStats.size !== remoteFile.size ||
-                dayjs().subtract(1, 'minute').isAfter(this.lastFTPOperationTimestamp)
-            );
+        if (await this.shouldDownloadBasedOnPath(patchFilePath, remoteFile.size, elapsedOneMinute)) {
+            return true;
         }
 
-        return true;
+        return !(await fs.pathExists(localFilePath));
+    }
+
+    private async shouldDownloadBasedOnPath(
+        filePath: string,
+        remoteSize: number,
+        elapsedOneMinute: boolean
+    ): Promise<boolean> {
+        if (await fs.pathExists(filePath)) {
+            const fileStats = await fs.stat(filePath);
+            return fileStats.size !== remoteSize || elapsedOneMinute;
+        }
+        return false;
     }
 
     private async waitForContinueFlag() {
@@ -174,71 +186,89 @@ export class FtpSynchronizer {
             await this.waitForContinueFlag();
 
             if (remoteFile.name === '.' || remoteFile.name === '..') continue;
-            this.statusEntries.downloadMsg = '-';
+
             const localFilePath = path.join(localPath, remoteFile.name);
             const remoteFilePath = this.ftpPath(remotePath, remoteFile.name);
             const relativePathFromStart = path.relative(this.localDir, localFilePath);
             const patchFilePath = path.join(patchBasePath, relativePathFromStart);
 
             if (remoteFile.type === FileType.Directory) {
-                this.ui.currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
-                this.ui.screen.render();
+                this.updateCurrentDirectory(remoteFilePath);
                 await this.traverseAndSync(localFilePath, remoteFilePath, patchBasePath);
             } else {
-                if (await this.shouldDownloadFile(localFilePath, remoteFile, patchFilePath)) {
-                    if (!this.isSafetyDownload) {
-                        this.statusEntries.syncCounter++;
-                    }
-                    this.lastFTPOperationTimestamp = dayjs();
-                    await fs.ensureDir(path.dirname(patchFilePath));
-
-                    this.ui.syncLogBox.add(chalk.yellow(`- ${remoteFile.name}`));
-                    const getElapsedTimeInSeconds = (start: [number, number]): number => {
-                        const [seconds, nanoseconds] = process.hrtime(start);
-                        return seconds + nanoseconds / 1e9;
-                    };
-
-                    let lastBytesOverall = 0;
-                    const startTime = process.hrtime(); // Start the timer here
-
-                    this.conn.trackProgress(info => {
-                        const elapsedSeconds = getElapsedTimeInSeconds(startTime);
-                        const bytesSinceLast = info.bytesOverall - lastBytesOverall;
-
-                        // Speed since the last check
-                        const speed = bytesSinceLast / elapsedSeconds / 1024;
-
-                        lastBytesOverall = info.bytesOverall;
-                        this.statusEntries.downloadMsg = `Download: ${(
-                            (info.bytesOverall / remoteFile.size) *
-                            100
-                        ).toFixed(2)}% @ ${speed.toFixed(2)} kB/s`;
-                        this.ui.updateStatusBox(this.statusEntries);
-
-                        this.ui.screen.render();
-                    });
-                    await this.conn.safeDownload(fs.createWriteStream(patchFilePath), remoteFilePath);
-
-                    // Set the modification time of the local file to match the remote file
-                    if (remoteFile.modifiedAt) {
-                        await fs.utimes(patchFilePath, new Date(), remoteFile.modifiedAt);
-                    }
-
-                    const syncContent = this.ui.syncLogBox.content.split('\n');
-                    syncContent.pop();
-                    this.ui.syncLogBox.setContent(syncContent.join('\n'));
-                    if (this.isSafetyDownload) {
-                        this.ui.syncLogBox.add(chalk.bold.strikethrough.grey.dim(`\u2713 ${remoteFile.name} (safety)`));
-                        this.isSafetyDownload = false;
-                    } else {
-                        this.ui.syncLogBox.add(chalk.bold.green(`\u2713 ${remoteFile.name}`));
-                    }
-                    this.conn.trackProgress();
-                } else {
-                    this.ui.logBox.add(`${chalk.red(remoteFile.name)} in sync`);
-                }
+                await this.handleFileDownload(localFilePath, remoteFile, patchFilePath, remoteFilePath);
             }
+
             this.ui.screen.render();
+        }
+    }
+
+    private updateCurrentDirectory(remoteFilePath: string) {
+        this.ui.currentDirectoryBox.setText(`current remote directory: ${remoteFilePath}`);
+    }
+
+    private async handleFileDownload(
+        localFilePath: string,
+        remoteFile: FileInfo,
+        patchFilePath: string,
+        remoteFilePath: string
+    ) {
+        if (!(await this.shouldDownloadFile(localFilePath, remoteFile, patchFilePath))) {
+            this.ui.logBox.add(`${chalk.red(remoteFile.name)} in sync`);
+            return;
+        }
+
+        if (!this.isSafetyDownload) {
+            this.statusEntries.syncCounter++;
+        }
+        this.lastFTPOperationTimestamp = dayjs();
+        await fs.ensureDir(path.dirname(patchFilePath));
+
+        this.ui.syncLogBox.add(chalk.yellow(`- ${remoteFile.name}`));
+
+        this.trackDownloadProgress(remoteFile);
+        await this.conn.safeDownload(fs.createWriteStream(patchFilePath), remoteFilePath);
+
+        if (remoteFile.modifiedAt) {
+            await fs.utimes(patchFilePath, new Date(), remoteFile.modifiedAt);
+        }
+
+        this.updateSyncLog(remoteFile);
+        this.conn.trackProgress();
+    }
+
+    private trackDownloadProgress(remoteFile: FileInfo) {
+        let lastBytesOverall = 0;
+        const startTime = process.hrtime();
+
+        this.conn.trackProgress(info => {
+            const elapsedSeconds = this.getElapsedTimeInSeconds(startTime);
+            const bytesSinceLast = info.bytesOverall - lastBytesOverall;
+            const speed = bytesSinceLast / elapsedSeconds / 1024;
+
+            lastBytesOverall = info.bytesOverall;
+            this.statusEntries.downloadMsg = `Download: ${((info.bytesOverall / remoteFile.size) * 100).toFixed(
+                2
+            )}% @ ${speed.toFixed(2)} kB/s`;
+            this.ui.updateStatusBox(this.statusEntries);
+            this.ui.screen.render();
+        });
+    }
+
+    private getElapsedTimeInSeconds(start: [number, number]): number {
+        const [seconds, nanoseconds] = process.hrtime(start);
+        return seconds + nanoseconds / 1e9;
+    }
+
+    private updateSyncLog(remoteFile: FileInfo) {
+        const syncContent = this.ui.syncLogBox.content.split('\n');
+        syncContent.pop();
+        this.ui.syncLogBox.setContent(syncContent.join('\n'));
+        if (this.isSafetyDownload) {
+            this.ui.syncLogBox.add(chalk.bold.strikethrough.grey.dim(`\u2713 ${remoteFile.name} (safety)`));
+            this.isSafetyDownload = false;
+        } else {
+            this.ui.syncLogBox.add(chalk.bold.green(`\u2713 ${remoteFile.name}`));
         }
     }
 
