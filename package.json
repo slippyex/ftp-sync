@@ -25,7 +25,7 @@
     "ora": "7.0.1"
   },
   "devDependencies": {
-    "@types/blessed": "^0.1.22",
+    "@types/blessed": "^0.1.23",
     "@types/fs-extra": "^11.0.1",
     "@types/iconv-lite": "^0.0.1",
     "@types/jest": "^29.5.4",
