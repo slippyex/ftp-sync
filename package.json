@@ -28,7 +28,7 @@
     "@types/blessed": "^0.1.23",
     "@types/fs-extra": "^11.0.2",
     "@types/iconv-lite": "^0.0.1",
-    "@types/jest": "^29.5.5",
+    "@types/jest": "^29.5.10",
     "@types/node": "^20.8.0",
     "@types/ora": "^3.2.0",
     "@typescript-eslint/eslint-plugin": "^6.7.3",
