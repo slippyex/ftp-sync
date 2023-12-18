@@ -701,10 +701,10 @@
   dependencies:
     "@babel/types" "^7.20.7"
 
-"@types/blessed@^0.1.23":
-  version "0.1.23"
-  resolved "https://registry.yarnpkg.com/@types/blessed/-/blessed-0.1.23.tgz#52d7f8cac2a7595f54d69541636ffee943674d72"
-  integrity sha512-KSsK70Cs+g6yQAymwpPqzyAepT0ruteiFqLYIH9P9dYTNCEI3cyAntRV0D78SM5mjAg7YfznOCisycAVU6dFHg==
+"@types/blessed@^0.1.25":
+  version "0.1.25"
+  resolved "https://registry.yarnpkg.com/@types/blessed/-/blessed-0.1.25.tgz#ab415f4c81f1dab8bf1e4fb98146c7f0f4e4e181"
+  integrity sha512-kQsjBgtsbJLmG6CJA+Z6Nujj+tq1fcSE3UIowbDvzQI4wWmoTV7djUDhSo5lDjgwpIN0oRvks0SA5mMdKE5eFg==
   dependencies:
     "@types/node" "*"
 
