@@ -16,7 +16,7 @@
     "lint": "eslint --ext .ts src/"
   },
   "dependencies": {
-    "basic-ftp": "^5.0.3",
+    "basic-ftp": "^5.0.5",
     "blessed": "^0.1.81",
     "chalk": "4",
     "dayjs": "^1.11.10",
